@@ -2,6 +2,7 @@
 #include "tree/modulifier.h"
 #include <llvm/LLVMContext.h>
 #include <llvm/Module.h>
+#include <llvm/InlineAsm.h>
 #include <llvm/Support/IRBuilder.h>
 
 #include <vector>
@@ -67,13 +68,13 @@ void Modulifier::visit(tree::IO *i)
 			LoadInst* cell = builder->CreateLoad(address, "cell");
 			//Value* cell32 = builder->CreateSExt(cell, Type::getInt32Ty(module->getContext()), "cell");
 			/*CallInst* call = */builder->CreateCall(
-					module->getFunction("putchar"), cell/*32*/, "res");
+				module->getFunction("putchar"), cell/*32*/);
 		}
 		break;
 		case ',':
 		{
 			CallInst* input = builder->CreateCall(
-					module->getFunction("getchar"), "input");
+				module->getFunction("getchar"), "input");
 			/*StoreInst* store = */builder->CreateStore(input, address);
 		}
 	}
@@ -133,11 +134,31 @@ llvm::Module* Modulifier::modulify(tree::Block *b)
 	std::vector<Type*> putchar_args;
 	putchar_args.push_back(IntegerType::getInt16Ty(module->getContext()));
 	FunctionType* putchar_ty = FunctionType::get(
-		IntegerType::getInt16Ty(module->getContext()),
+		Type::getVoidTy(module->getContext()),
 		putchar_args,
 		false);
 	/*Function* putcharFunc = */Function::Create(
 		putchar_ty, GlobalValue::ExternalLinkage, "putchar", module);
+	
+	Value* putchar_arg = module->getFunction("putchar")->arg_begin()++;
+	putchar_arg->setName("putchar_arg");
+	
+	BasicBlock* putchar_block = BasicBlock::Create(
+		module->getContext(), "", module->getFunction("putchar"));
+	std::vector<Type*> putchar_asm_args;
+	putchar_asm_args.push_back(IntegerType::getInt16Ty(module->getContext()));
+	InlineAsm* putchar_asm = InlineAsm::get(
+		FunctionType::get(
+			Type::getVoidTy(module->getContext()),
+			putchar_asm_args,
+			false),
+		"set [i], $0;\n\tadd [i], 0xf000\n\tadd i, 0x1",
+		"r",
+		true);
+	builder->SetInsertPoint(putchar_block);
+	builder->CreateCall(putchar_asm, putchar_arg);
+	builder->CreateRetVoid();
+
 
 	FunctionType* getchar_ty = FunctionType::get(
 		IntegerType::getInt16Ty(module->getContext()),
@@ -158,6 +179,15 @@ llvm::Module* Modulifier::modulify(tree::Block *b)
 	ConstantInt* zero =
 		ConstantInt::get(Type::getInt16Ty(module->getContext()), 0);
 	builder->CreateStore(zero, pntr);
+
+	InlineAsm* monitor_asm = InlineAsm::get(
+		FunctionType::get(
+			Type::getVoidTy(module->getContext()),
+			false),
+		"set i, 0x4000\n\tset a, 0\n\tset b, 0x4000\n\thwi 0",
+		"",
+		true);
+	builder->CreateCall(monitor_asm);
 
 	visit(b);
 
